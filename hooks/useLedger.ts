@@ -11,6 +11,10 @@ export interface LedgerClock {
   observedAt: number;
   /** True when the most recent refresh failed. */
   degraded: boolean;
+  /** Number of consecutive failed refreshes since the last success. */
+  consecutiveFailures: number;
+  /** True when the data is out of date (one or more consecutive failures). */
+  stale: boolean;
 }
 
 /**
@@ -23,6 +27,8 @@ export function useLedger(network: Network, intervalMs = 15_000): LedgerClock {
     sequence: null,
     observedAt: 0,
     degraded: false,
+    consecutiveFailures: 0,
+    stale: false,
   });
 
   useEffect(() => {
@@ -30,10 +36,28 @@ export function useLedger(network: Network, intervalMs = 15_000): LedgerClock {
     const tick = async () => {
       try {
         const sequence = await getLatestLedger(network);
-        if (active) setClock({ sequence, observedAt: Date.now(), degraded: false });
+        if (active) {
+          setClock({
+            sequence,
+            observedAt: Date.now(),
+            degraded: false,
+            consecutiveFailures: 0,
+            stale: false,
+          });
+        }
       } catch {
-        // Keep the last known ledger; the next tick tries again.
-        if (active) setClock((prev) => ({ ...prev, degraded: true }));
+        // Keep the last known ledger but flag it as stale; the next tick retries.
+        if (active) {
+          setClock((prev) => {
+            const consecutiveFailures = prev.consecutiveFailures + 1;
+            return {
+              ...prev,
+              degraded: true,
+              consecutiveFailures,
+              stale: true,
+            };
+          });
+        }
       }
     };
     void tick();
