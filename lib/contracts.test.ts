@@ -122,3 +122,69 @@ describe("deployments", () => {
     expect(contractsFor("mainnet")).toBeNull();
   });
 });
+
+describe("rpc failover", () => {
+  const originalUrl = process.env.NEXT_PUBLIC_RPC_URL;
+  const originalUrls = process.env.NEXT_PUBLIC_RPC_URLS;
+
+  afterEach(() => {
+    if (originalUrl === undefined) delete process.env.NEXT_PUBLIC_RPC_URL;
+    else process.env.NEXT_PUBLIC_RPC_URL = originalUrl;
+    if (originalUrls === undefined) delete process.env.NEXT_PUBLIC_RPC_URLS;
+    else process.env.NEXT_PUBLIC_RPC_URLS = originalUrls;
+    jest.resetModules();
+  });
+
+  it("parses a comma-separated fallback list, keeping the primary first", () => {
+    process.env.NEXT_PUBLIC_RPC_URL = "https://primary.example.org";
+    process.env.NEXT_PUBLIC_RPC_URLS =
+      "https://fallback-1.example.org, https://fallback-2.example.org";
+    jest.isolateModules(() => {
+      const { RPC_URLS } = require("./stellar");
+      expect(RPC_URLS).toEqual([
+        "https://primary.example.org",
+        "https://fallback-1.example.org",
+        "https://fallback-2.example.org",
+      ]);
+    });
+  });
+
+  it("fails over to the next endpoint when the primary is dead", async () => {
+    process.env.NEXT_PUBLIC_RPC_URL = "https://dead.example.org";
+    process.env.NEXT_PUBLIC_RPC_URLS = "https://alive.example.org";
+    jest.isolateModules(() => {
+      const { withRpc } = require("./stellar");
+      const calls: string[] = [];
+      const fn = async (server: { serverURL: URL }) => {
+        const url = server.serverURL.toString();
+        calls.push(url);
+        if (url.includes("dead")) throw new Error("connect ECONNREFUSED");
+        return "ok";
+      };
+      return expect(withRpc(fn)).resolves.toBe("ok").then(() => {
+        expect(calls.some((u) => u.includes("dead"))).toBe(true);
+        expect(calls.some((u) => u.includes("alive"))).toBe(true);
+      });
+    });
+  });
+
+  it("retries rate-limited requests before failing over", async () => {
+    process.env.NEXT_PUBLIC_RPC_URL = "https://primary.example.org";
+    process.env.NEXT_PUBLIC_RPC_URLS = "https://fallback.example.org";
+    jest.isolateModules(() => {
+      const { withRpc } = require("./stellar");
+      let attempts = 0;
+      const fn = async (server: { serverURL: URL }) => {
+        if (server.serverURL.toString().includes("primary")) {
+          attempts += 1;
+          if (attempts < 2) throw new Error("429 Too Many Requests");
+          return "primary-ok";
+        }
+        return "fallback-ok";
+      };
+      return expect(withRpc(fn)).resolves.toBe("primary-ok").then(() => {
+        expect(attempts).toBe(2);
+      });
+    });
+  });
+});
