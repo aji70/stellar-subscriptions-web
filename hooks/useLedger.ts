@@ -9,6 +9,8 @@ export interface LedgerClock {
   sequence: number | null;
   /** When that sequence was observed (ms since epoch). */
   observedAt: number;
+  /** True when the most recent refresh failed. */
+  degraded: boolean;
 }
 
 /**
@@ -17,16 +19,21 @@ export interface LedgerClock {
  * by ledger number.
  */
 export function useLedger(network: Network, intervalMs = 15_000): LedgerClock {
-  const [clock, setClock] = useState<LedgerClock>({ sequence: null, observedAt: 0 });
+  const [clock, setClock] = useState<LedgerClock>({
+    sequence: null,
+    observedAt: 0,
+    degraded: false,
+  });
 
   useEffect(() => {
     let active = true;
     const tick = async () => {
       try {
         const sequence = await getLatestLedger(network);
-        if (active) setClock({ sequence, observedAt: Date.now() });
+        if (active) setClock({ sequence, observedAt: Date.now(), degraded: false });
       } catch {
         // Keep the last known ledger; the next tick tries again.
+        if (active) setClock((prev) => ({ ...prev, degraded: true }));
       }
     };
     void tick();
