@@ -121,6 +121,15 @@ describe("deployments", () => {
     expect(contractsFor("testnet")?.subscription).toMatch(/^C[A-Z0-9]{55}$/);
     expect(contractsFor("mainnet")).toBeNull();
   });
+
+  it("returns null for mainnet so callers show the not-deployed state", () => {
+    // Mainnet ids are intentionally empty until a real deployment exists.
+    // Callers must treat null as "not deployed" rather than crashing.
+    const mainnet = contractsFor("mainnet");
+    expect(mainnet).toBeNull();
+    expect(mainnet?.subscription).toBeUndefined();
+    expect(mainnet?.registry).toBeUndefined();
+  });
 });
 
 describe("rpc failover", () => {
